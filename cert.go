@@ -15,6 +15,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"math/big"
@@ -56,10 +57,16 @@ func (m *mkcert) makeCert(hosts []string) {
 	fatalIfErr(err, "failed to generate certificate key")
 	pub := priv.(crypto.Signer).Public()
 
-	// Certificates last for 2 years and 3 months, which is always less than
+	// By default certificates last for 2 years and 3 months, which is always less than
 	// 825 days, the limit that macOS/iOS apply to all certificates,
 	// including custom roots. See https://support.apple.com/en-us/HT210176.
-	expiration := time.Now().AddDate(2, 3, 0)
+	// Alternatively this can be overriden by env variable VALID_DAYS.
+	var expiration time.Time
+	if validDays, err := getValidDays(); err != nil {
+		expiration = time.Now().AddDate(2, 3, 0)
+	} else {
+		expiration = time.Now().AddDate(0, 0, validDays)
+	}
 
 	tpl := &x509.Certificate{
 		SerialNumber: randomSerialNumber(),
@@ -225,7 +232,12 @@ func (m *mkcert) makeCertFromCSR() {
 	fatalIfErr(err, "failed to parse the CSR")
 	fatalIfErr(csr.CheckSignature(), "invalid CSR signature")
 
-	expiration := time.Now().AddDate(2, 3, 0)
+	var expiration time.Time
+	if validDays, err := getValidDays(); err != nil {
+		expiration = time.Now().AddDate(2, 3, 0)
+	} else {
+		expiration = time.Now().AddDate(0, 0, validDays)
+	}
 	tpl := &x509.Certificate{
 		SerialNumber:    randomSerialNumber(),
 		Subject:         csr.Subject,
@@ -365,4 +377,17 @@ func (m *mkcert) newCA() {
 
 func (m *mkcert) caUniqueName() string {
 	return "mkcert development CA " + m.caCert.SerialNumber.String()
+}
+
+func getValidDays() (int, error) {
+	vd := os.Getenv("VALID_DAYS")
+	if vd == "" {
+		return 0, fmt.Errorf("not set from environment")
+	}
+
+	vdi, err := strconv.Atoi(vd)
+	if err != nil {
+		return 0, err
+	}
+	return vdi, nil
 }
